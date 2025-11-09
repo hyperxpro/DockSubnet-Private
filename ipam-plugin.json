@@ -1,0 +1,7 @@
+{
+  "Name": "ipam",
+  "Addr": "unix:///run/docker/plugins/ipam.sock",
+  "TLSConfig": {
+    "InsecureSkipVerify": false
+  }
+}

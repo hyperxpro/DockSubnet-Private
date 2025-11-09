@@ -1,0 +1,24 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# State files
+*.yaml
+!*.example.yaml
+state.yaml
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db

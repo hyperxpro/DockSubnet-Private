@@ -1,0 +1,16 @@
+[Unit]
+Description=Docker IPAM Plugin
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/docker-ipam-plugin
+Restart=on-failure
+RestartSec=5
+Environment="SOCKET_PATH=/run/docker/plugins/ipam.sock"
+Environment="STATE_FILE=/var/lib/docker-ipam/state.yaml"
+Environment="DEFAULT_SUBNET=172.18.0.0/16"
+Environment="RUST_LOG=docker_ipam_plugin=info"
+
+[Install]
+WantedBy=multi-user.target
