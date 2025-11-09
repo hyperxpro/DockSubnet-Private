@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  ipam-plugin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: docker-ipam-plugin:latest
+    container_name: docker-ipam-plugin
+    environment:
+      - SOCKET_PATH=/run/docker/plugins/ipam.sock
+      - STATE_FILE=/var/lib/docker-ipam/state.yaml
+      - DEFAULT_SUBNET=172.18.0.0/16
+      - RUST_LOG=docker_ipam_plugin=info
+      # For testing, use TCP mode instead of Unix socket
+      - TCP_ADDR=0.0.0.0:8080
+    volumes:
+      - ipam-state:/var/lib/docker-ipam
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - ipam-network
+
+  # Test container to verify the plugin works
+  test-nginx:
+    image: nginx:alpine
+    container_name: test-nginx
+    depends_on:
+      - ipam-plugin
+    networks:
+      - ipam-network
+
+volumes:
+  ipam-state:
+    driver: local
+
+networks:
+  ipam-network:
+    driver: bridge

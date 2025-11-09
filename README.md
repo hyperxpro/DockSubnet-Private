@@ -36,6 +36,84 @@ cargo build --release
 
 The binary will be located at `target/release/docker-ipam-plugin`.
 
+### Quick Build and Test
+
+Use the provided build script:
+
+```bash
+./build.sh
+```
+
+Or use the Makefile:
+
+```bash
+make build
+make test
+```
+
+## Docker
+
+### Build Docker Image
+
+Build using the multi-stage Dockerfile with distroless base:
+
+```bash
+docker build -t docker-ipam-plugin:latest .
+```
+
+Or use the Makefile:
+
+```bash
+make docker-build
+```
+
+### Run with Docker Compose
+
+For testing and development:
+
+```bash
+docker-compose up --build
+```
+
+The plugin will start in TCP mode on port 8080 for easy testing.
+
+### Run Docker Container
+
+```bash
+docker run -d \
+  --name docker-ipam-plugin \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ipam-state:/var/lib/docker-ipam \
+  -e SOCKET_PATH=/run/docker/plugins/ipam.sock \
+  -e STATE_FILE=/var/lib/docker-ipam/state.yaml \
+  -e DEFAULT_SUBNET=172.18.0.0/16 \
+  -e RUST_LOG=docker_ipam_plugin=info \
+  docker-ipam-plugin:latest
+```
+
+## Testing
+
+Run all tests:
+
+```bash
+cargo test
+```
+
+Run with the test script:
+
+```bash
+./test.sh
+```
+
+For detailed testing instructions, see [TESTING.md](TESTING.md).
+
+### Test Coverage
+
+The project includes comprehensive tests:
+- 13 unit tests covering storage and IPAM logic
+- 3 integration tests
+- All tests pass successfully
+
 ## Installation
 
 ### Manual Installation

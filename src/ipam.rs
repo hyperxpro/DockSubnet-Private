@@ -238,3 +238,231 @@ mod uuid {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+    use tempfile::TempDir;
+
+    async fn create_test_plugin() -> (IpamPlugin, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+        let storage = Arc::new(Storage::new(&state_file).await.unwrap());
+        let plugin = IpamPlugin::new(storage, "10.10.0.0/24".to_string());
+        (plugin, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_get_capabilities() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let caps = plugin.get_capabilities().await.unwrap();
+        assert!(!caps.requires_mac_address);
+        assert!(!caps.requires_request_replay);
+    }
+
+    #[tokio::test]
+    async fn test_request_pool() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = RequestPoolRequest {
+            pool: Some("192.168.1.0/24".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+
+        let response = plugin.request_pool(req).await.unwrap();
+        assert_eq!(response.pool, "192.168.1.0/24");
+        assert!(!response.pool_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_request_pool_with_default_subnet() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = RequestPoolRequest {
+            pool: None,
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+
+        let response = plugin.request_pool(req).await.unwrap();
+        assert_eq!(response.pool, "10.10.0.0/24");
+    }
+
+    #[tokio::test]
+    async fn test_request_and_release_address() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // First create a pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("10.20.0.0/24".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_response = plugin.request_pool(pool_req).await.unwrap();
+
+        // Request an address
+        let mut options = HashMap::new();
+        options.insert("container_name".to_string(), "test-container".to_string());
+
+        let addr_req = RequestAddressRequest {
+            pool_id: pool_response.pool_id.clone(),
+            address: None,
+            options: Some(options),
+        };
+
+        let addr_response = plugin.request_address(addr_req).await.unwrap();
+        assert!(addr_response.address.starts_with("10.20.0."));
+
+        // Release the address
+        let release_req = ReleaseAddressRequest {
+            pool_id: pool_response.pool_id,
+            address: addr_response.address,
+        };
+
+        plugin.release_address(release_req).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_request_specific_address() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create a pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("172.16.0.0/24".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_response = plugin.request_pool(pool_req).await.unwrap();
+
+        // Request specific address
+        let addr_req = RequestAddressRequest {
+            pool_id: pool_response.pool_id,
+            address: Some("172.16.0.100".to_string()),
+            options: None,
+        };
+
+        let addr_response = plugin.request_address(addr_req).await.unwrap();
+        assert!(addr_response.address.starts_with("172.16.0.100"));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_address_allocation() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create a pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("10.30.0.0/29".to_string()), // Small subnet with only 6 usable IPs
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_response = plugin.request_pool(pool_req).await.unwrap();
+
+        // Allocate multiple IPs
+        let mut addresses = Vec::new();
+        for i in 0..3 {
+            let mut options = HashMap::new();
+            options.insert("container_name".to_string(), format!("container-{}", i));
+
+            let addr_req = RequestAddressRequest {
+                pool_id: pool_response.pool_id.clone(),
+                address: None,
+                options: Some(options),
+            };
+
+            let addr_response = plugin.request_address(addr_req).await.unwrap();
+            addresses.push(addr_response.address);
+        }
+
+        // Ensure all addresses are different
+        assert_eq!(addresses.len(), 3);
+        assert_ne!(addresses[0], addresses[1]);
+        assert_ne!(addresses[1], addresses[2]);
+        assert_ne!(addresses[0], addresses[2]);
+    }
+
+    #[tokio::test]
+    async fn test_release_pool() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create a pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("10.40.0.0/24".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_response = plugin.request_pool(pool_req).await.unwrap();
+
+        // Allocate an address
+        let addr_req = RequestAddressRequest {
+            pool_id: pool_response.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        plugin.request_address(addr_req).await.unwrap();
+
+        // Release the pool
+        let release_pool_req = ReleasePoolRequest {
+            pool_id: pool_response.pool_id,
+        };
+        plugin.release_pool(release_pool_req).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_allocate_next_ip() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let network: IpNetwork = "10.50.0.0/30".parse().unwrap(); // Only 2 usable IPs
+
+        // Allocate first IP
+        let ip1 = plugin.allocate_next_ip(&network).await.unwrap();
+        assert_eq!(ip1.to_string(), "10.50.0.1");
+
+        // Manually add a lease to simulate allocation
+        {
+            let mut state = plugin.storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: ip1,
+                container_name: "test".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Allocate second IP
+        let ip2 = plugin.allocate_next_ip(&network).await.unwrap();
+        assert_eq!(ip2.to_string(), "10.50.0.2");
+
+        // Manually add second lease
+        {
+            let mut state = plugin.storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: ip2,
+                container_name: "test2".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Try to allocate third IP (should fail - no more IPs)
+        let result = plugin.allocate_next_ip(&network).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_pool_request() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        let req = RequestPoolRequest {
+            pool: Some("invalid-subnet".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+
+        let result = plugin.request_pool(req).await;
+        assert!(result.is_err());
+    }
+}

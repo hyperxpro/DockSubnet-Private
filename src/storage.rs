@@ -82,3 +82,114 @@ impl Storage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{IpLease, PoolInfo};
+    use chrono::Utc;
+    use std::net::IpAddr;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_storage_new_creates_default_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+        let state = storage.read().await;
+
+        assert!(state.pools.is_empty());
+        assert!(state.leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_storage_save_and_reload() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        // Create storage and add some data
+        let storage = Storage::new(&state_file).await.unwrap();
+        {
+            let mut state = storage.write().await;
+            state.pools.insert(
+                "pool-1".to_string(),
+                PoolInfo {
+                    pool_id: "pool-1".to_string(),
+                    subnet: "172.18.0.0/16".to_string(),
+                    gateway: None,
+                },
+            );
+            state.leases.push(IpLease {
+                ip_address: "172.18.0.2".parse::<IpAddr>().unwrap(),
+                container_name: "test-container".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Save to disk
+        storage.save().await.unwrap();
+
+        // Create new storage instance from same file
+        let storage2 = Storage::new(&state_file).await.unwrap();
+        let state = storage2.read().await;
+
+        // Verify data was persisted
+        assert_eq!(state.pools.len(), 1);
+        assert_eq!(state.leases.len(), 1);
+        assert_eq!(state.pools.get("pool-1").unwrap().subnet, "172.18.0.0/16");
+        assert_eq!(state.leases[0].container_name, "test-container");
+    }
+
+    #[tokio::test]
+    async fn test_storage_write_and_read() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+
+        // Write data
+        {
+            let mut state = storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: "10.0.0.1".parse::<IpAddr>().unwrap(),
+                container_name: "container1".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Read data
+        {
+            let state = storage.read().await;
+            assert_eq!(state.leases.len(), 1);
+            assert_eq!(state.leases[0].ip_address.to_string(), "10.0.0.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_atomic_save() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+        {
+            let mut state = storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: "192.168.1.1".parse::<IpAddr>().unwrap(),
+                container_name: "test".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Save multiple times to test atomicity
+        storage.save().await.unwrap();
+        storage.save().await.unwrap();
+
+        // Verify temp file is cleaned up
+        let temp_file = state_file.with_extension("tmp");
+        assert!(!temp_file.exists());
+
+        // Verify state file exists and is valid
+        assert!(state_file.exists());
+    }
+}
