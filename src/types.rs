@@ -12,8 +12,7 @@ pub struct IpLease {
 }
 
 /// The IPAM state that gets persisted to YAML
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IpamState {
     pub pools: HashMap<String, PoolInfo>,
     pub leases: Vec<IpLease>,
@@ -51,7 +50,7 @@ pub struct RequestPoolRequest {
     pub v6: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RequestPoolResponse {
     #[serde(rename = "PoolID")]
     pub pool_id: String,
@@ -77,7 +76,7 @@ pub struct RequestAddressRequest {
     pub options: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RequestAddressResponse {
     #[serde(rename = "Address")]
     pub address: String,

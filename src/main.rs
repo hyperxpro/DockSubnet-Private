@@ -1,11 +1,6 @@
-mod ipam;
-mod server;
-mod storage;
-mod types;
-
-use crate::ipam::IpamPlugin;
-use crate::server::PluginServer;
-use crate::storage::Storage;
+use docker_ipam_plugin::ipam::IpamPlugin;
+use docker_ipam_plugin::server::PluginServer;
+use docker_ipam_plugin::storage::Storage;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

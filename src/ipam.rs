@@ -468,4 +468,75 @@ mod tests {
         let result = plugin.request_pool(req).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_address_request_with_nonexistent_pool() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        let req = RequestAddressRequest {
+            pool_id: "nonexistent-pool-id".to_string(),
+            address: None,
+            options: None,
+        };
+
+        let result = plugin.request_address(req).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Pool not found"));
+    }
+
+    #[tokio::test]
+    async fn test_allocate_next_ip_skips_network_and_broadcast() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        let pool_req = RequestPoolRequest {
+            pool: Some("172.16.0.0/30".to_string()), // Only .1 and .2 are usable
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_resp = plugin.request_pool(pool_req).await.unwrap();
+
+        // First allocation should be 172.16.0.1
+        let addr_req1 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let addr_resp1 = plugin.request_address(addr_req1).await.unwrap();
+        assert_eq!(addr_resp1.address, "172.16.0.1/30");
+
+        // Second allocation should be 172.16.0.2
+        let addr_req2 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let addr_resp2 = plugin.request_address(addr_req2).await.unwrap();
+        assert_eq!(addr_resp2.address, "172.16.0.2/30");
+
+        // Third allocation should fail (only .0=network, .1 and .2 usable, .3=broadcast)
+        let addr_req3 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let result = plugin.request_address(addr_req3).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_pool_creation() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create an IPv6 pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("2001:db8::/32".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: Some(true),
+        };
+        let pool_resp = plugin.request_pool(pool_req).await.unwrap();
+        assert_eq!(pool_resp.pool, "2001:db8::/32");
+        assert!(pool_resp.pool_id.starts_with("pool-"));
+    }
 }

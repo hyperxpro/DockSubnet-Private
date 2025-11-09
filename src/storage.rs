@@ -88,6 +88,7 @@ mod tests {
     use crate::types::{IpLease, PoolInfo};
     use chrono::Utc;
     use std::net::IpAddr;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -190,5 +191,156 @@ mod tests {
 
         // Verify state file exists and is valid
         assert!(state_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_storage_concurrent_reads() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Arc::new(Storage::new(&state_file).await.unwrap());
+
+        // Add some data
+        {
+            let mut state = storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: "10.0.0.1".parse::<IpAddr>().unwrap(),
+                container_name: "container1".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+        storage.save().await.unwrap();
+
+        // Spawn multiple concurrent readers
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let storage_clone = storage.clone();
+            let handle = tokio::spawn(async move {
+                let state = storage_clone.read().await;
+                assert_eq!(state.leases.len(), 1);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_file_permissions() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+        {
+            let mut state = storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: "10.0.0.2".parse::<IpAddr>().unwrap(),
+                container_name: "test".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+        storage.save().await.unwrap();
+
+        // Verify file exists and is readable
+        assert!(state_file.exists());
+        let contents = tokio::fs::read_to_string(&state_file).await.unwrap();
+        assert!(!contents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_storage_empty_state_serialization() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+        storage.save().await.unwrap();
+
+        // Read the file and verify it's valid YAML
+        let contents = tokio::fs::read_to_string(&state_file).await.unwrap();
+        let parsed: IpamState = serde_yaml::from_str(&contents).unwrap();
+        assert_eq!(parsed.pools.len(), 0);
+        assert_eq!(parsed.leases.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_storage_reload_method() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+
+        // Add some data and save
+        {
+            let mut state = storage.write().await;
+            state.leases.push(IpLease {
+                ip_address: "10.0.0.3".parse::<IpAddr>().unwrap(),
+                container_name: "container-reload".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+        storage.save().await.unwrap();
+
+        // Modify in-memory state
+        {
+            let mut state = storage.write().await;
+            state.leases.clear();
+        }
+
+        // Reload from disk
+        storage.reload().await.unwrap();
+
+        // Verify data is restored
+        let state = storage.read().await;
+        assert_eq!(state.leases.len(), 1);
+        assert_eq!(state.leases[0].container_name, "container-reload");
+    }
+
+    #[tokio::test]
+    async fn test_storage_with_pools_and_leases() {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+
+        let storage = Storage::new(&state_file).await.unwrap();
+        {
+            let mut state = storage.write().await;
+
+            // Add pool
+            state.pools.insert(
+                "pool-1".to_string(),
+                PoolInfo {
+                    pool_id: "pool-1".to_string(),
+                    subnet: "192.168.1.0/24".to_string(),
+                    gateway: Some("192.168.1.1".to_string()),
+                },
+            );
+
+            // Add leases
+            state.leases.push(IpLease {
+                ip_address: "192.168.1.10".parse::<IpAddr>().unwrap(),
+                container_name: "container1".to_string(),
+                lease_time: Utc::now(),
+            });
+            state.leases.push(IpLease {
+                ip_address: "192.168.1.11".parse::<IpAddr>().unwrap(),
+                container_name: "container2".to_string(),
+                lease_time: Utc::now(),
+            });
+        }
+
+        // Save and reload
+        storage.save().await.unwrap();
+        let new_storage = Storage::new(&state_file).await.unwrap();
+
+        // Verify all data persisted
+        let state = new_storage.read().await;
+        assert_eq!(state.pools.len(), 1);
+        assert_eq!(state.leases.len(), 2);
+        assert!(state.pools.contains_key("pool-1"));
+        assert_eq!(
+            state.pools.get("pool-1").unwrap().gateway,
+            Some("192.168.1.1".to_string())
+        );
     }
 }
