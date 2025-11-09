@@ -1,11 +1,6 @@
-mod ipam;
-mod server;
-mod storage;
-mod types;
-
-use crate::ipam::IpamPlugin;
-use crate::server::PluginServer;
-use crate::storage::Storage;
+use docker_ipam_plugin::ipam::IpamPlugin;
+use docker_ipam_plugin::server::PluginServer;
+use docker_ipam_plugin::storage::Storage;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -27,8 +22,8 @@ async fn main() -> anyhow::Result<()> {
     let state_file = std::env::var("STATE_FILE")
         .unwrap_or_else(|_| "/var/lib/docker-ipam/state.yaml".to_string());
 
-    let default_subnet = std::env::var("DEFAULT_SUBNET")
-        .unwrap_or_else(|_| "172.18.0.0/16".to_string());
+    let default_subnet =
+        std::env::var("DEFAULT_SUBNET").unwrap_or_else(|_| "172.18.0.0/16".to_string());
 
     tracing::info!("Starting Docker IPAM Plugin");
     tracing::info!("Socket path: {}", socket_path);

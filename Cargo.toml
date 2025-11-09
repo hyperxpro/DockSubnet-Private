@@ -19,6 +19,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3.8"
 
+[lib]
+name = "docker_ipam_plugin"
+path = "src/lib.rs"
+
 [[bin]]
 name = "docker-ipam-plugin"
 path = "src/main.rs"

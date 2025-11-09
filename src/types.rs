@@ -12,7 +12,7 @@ pub struct IpLease {
 }
 
 /// The IPAM state that gets persisted to YAML
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IpamState {
     pub pools: HashMap<String, PoolInfo>,
     pub leases: Vec<IpLease>,
@@ -23,15 +23,6 @@ pub struct PoolInfo {
     pub pool_id: String,
     pub subnet: String,
     pub gateway: Option<String>,
-}
-
-impl Default for IpamState {
-    fn default() -> Self {
-        Self {
-            pools: HashMap::new(),
-            leases: Vec::new(),
-        }
-    }
 }
 
 // Docker IPAM Plugin API Request/Response types
@@ -48,15 +39,18 @@ pub struct CapabilitiesResponse {
 pub struct RequestPoolRequest {
     #[serde(rename = "Pool")]
     pub pool: Option<String>,
+    #[allow(dead_code)]
     #[serde(rename = "SubPool")]
     pub sub_pool: Option<String>,
+    #[allow(dead_code)]
     #[serde(rename = "Options")]
     pub options: Option<HashMap<String, String>>,
+    #[allow(dead_code)]
     #[serde(rename = "V6")]
     pub v6: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RequestPoolResponse {
     #[serde(rename = "PoolID")]
     pub pool_id: String,
@@ -82,7 +76,7 @@ pub struct RequestAddressRequest {
     pub options: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RequestAddressResponse {
     #[serde(rename = "Address")]
     pub address: String,

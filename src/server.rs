@@ -97,18 +97,14 @@ async fn handle_request(
     tracing::debug!("{} {}", method, path);
 
     let response = match (&method, path.as_str()) {
-        (&Method::POST, "/Plugin.Activate") => {
-            json_response(serde_json::json!({
-                "Implements": ["IpamDriver"]
-            }))
-        }
+        (&Method::POST, "/Plugin.Activate") => json_response(serde_json::json!({
+            "Implements": ["IpamDriver"]
+        })),
 
-        (&Method::POST, "/IpamDriver.GetCapabilities") => {
-            match plugin.get_capabilities().await {
-                Ok(caps) => json_response(caps),
-                Err(e) => error_response(&e.to_string()),
-            }
-        }
+        (&Method::POST, "/IpamDriver.GetCapabilities") => match plugin.get_capabilities().await {
+            Ok(caps) => json_response(caps),
+            Err(e) => error_response(&e.to_string()),
+        },
 
         (&Method::POST, "/IpamDriver.GetDefaultAddressSpaces") => {
             json_response(serde_json::json!({
@@ -175,8 +171,7 @@ async fn parse_body<T: serde::de::DeserializeOwned>(req: Request<Body>) -> Resul
         .await
         .map_err(|e| format!("Failed to read body: {}", e))?;
 
-    serde_json::from_slice(&body_bytes)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))
+    serde_json::from_slice(&body_bytes).map_err(|e| format!("Failed to parse JSON: {}", e))
 }
 
 /// Create a JSON response
@@ -193,4 +188,291 @@ fn json_response<T: serde::Serialize>(data: T) -> Response<Body> {
 fn error_response(message: &str) -> Response<Body> {
     tracing::error!("Request failed: {}", message);
     json_response(ErrorResponse::new(message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+    use hyper::body::to_bytes;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    async fn create_test_plugin() -> (Arc<IpamPlugin>, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let state_file = temp_dir.path().join("state.yaml");
+        let storage = Arc::new(Storage::new(&state_file).await.unwrap());
+        let plugin = Arc::new(IpamPlugin::new(storage, "10.0.0.0/24".to_string()));
+        (plugin, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_plugin_activate_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/Plugin.Activate")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("IpamDriver"));
+    }
+
+    #[tokio::test]
+    async fn test_get_capabilities_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.GetCapabilities")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("RequiresMACAddress"));
+        assert!(body_str.contains("false"));
+    }
+
+    #[tokio::test]
+    async fn test_get_default_address_spaces_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.GetDefaultAddressSpaces")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("LocalDefaultAddressSpace"));
+        assert!(body_str.contains("local"));
+        assert!(body_str.contains("GlobalDefaultAddressSpace"));
+        assert!(body_str.contains("global"));
+    }
+
+    #[tokio::test]
+    async fn test_request_pool_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let body = serde_json::json!({
+            "Pool": "192.168.1.0/24"
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("PoolID"));
+        assert!(body_str.contains("192.168.1.0/24"));
+    }
+
+    #[tokio::test]
+    async fn test_request_pool_invalid_subnet() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let body = serde_json::json!({
+            "Pool": "invalid-subnet"
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Err") || body_str.contains("error"));
+    }
+
+    #[tokio::test]
+    async fn test_request_address_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // First create a pool
+        let pool_body = serde_json::json!({
+            "Pool": "192.168.10.0/24"
+        });
+        let pool_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .header("Content-Type", "application/json")
+            .body(Body::from(pool_body.to_string()))
+            .unwrap();
+
+        let pool_response = handle_request(pool_req, plugin.clone()).await.unwrap();
+        let pool_body_bytes = to_bytes(pool_response.into_body()).await.unwrap();
+        let pool_resp: RequestPoolResponse = serde_json::from_slice(&pool_body_bytes).unwrap();
+
+        // Request an address
+        let addr_body = serde_json::json!({
+            "PoolID": pool_resp.pool_id,
+            "Options": {
+                "container_name": "test-container"
+            }
+        });
+        let addr_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestAddress")
+            .header("Content-Type", "application/json")
+            .body(Body::from(addr_body.to_string()))
+            .unwrap();
+
+        let response = handle_request(addr_req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Address"));
+        assert!(body_str.contains("192.168.10."));
+    }
+
+    #[tokio::test]
+    async fn test_release_address_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create pool and allocate address first
+        let pool_body = serde_json::json!({"Pool": "192.168.20.0/24"});
+        let pool_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .body(Body::from(pool_body.to_string()))
+            .unwrap();
+        let pool_response = handle_request(pool_req, plugin.clone()).await.unwrap();
+        let pool_body_bytes = to_bytes(pool_response.into_body()).await.unwrap();
+        let pool_resp: RequestPoolResponse = serde_json::from_slice(&pool_body_bytes).unwrap();
+
+        let addr_body = serde_json::json!({
+            "PoolID": pool_resp.pool_id,
+        });
+        let addr_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestAddress")
+            .body(Body::from(addr_body.to_string()))
+            .unwrap();
+        let addr_response = handle_request(addr_req, plugin.clone()).await.unwrap();
+        let addr_body_bytes = to_bytes(addr_response.into_body()).await.unwrap();
+        let addr_resp: RequestAddressResponse = serde_json::from_slice(&addr_body_bytes).unwrap();
+
+        // Release the address
+        let release_body = serde_json::json!({
+            "PoolID": pool_resp.pool_id,
+            "Address": addr_resp.address
+        });
+        let release_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.ReleaseAddress")
+            .body(Body::from(release_body.to_string()))
+            .unwrap();
+
+        let response = handle_request(release_req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_release_pool_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create a pool
+        let pool_body = serde_json::json!({"Pool": "192.168.30.0/24"});
+        let pool_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .body(Body::from(pool_body.to_string()))
+            .unwrap();
+        let pool_response = handle_request(pool_req, plugin.clone()).await.unwrap();
+        let pool_body_bytes = to_bytes(pool_response.into_body()).await.unwrap();
+        let pool_resp: RequestPoolResponse = serde_json::from_slice(&pool_body_bytes).unwrap();
+
+        // Release the pool
+        let release_body = serde_json::json!({
+            "PoolID": pool_resp.pool_id
+        });
+        let release_req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.ReleasePool")
+            .body(Body::from(release_body.to_string()))
+            .unwrap();
+
+        let response = handle_request(release_req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_endpoint() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/UnknownEndpoint")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_json_body() {
+        let (plugin, _temp) = create_test_plugin().await;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/IpamDriver.RequestPool")
+            .body(Body::from("invalid json"))
+            .unwrap();
+
+        let response = handle_request(req, plugin).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Err") || body_str.contains("error"));
+    }
+
+    #[tokio::test]
+    async fn test_json_response_helper() {
+        let data = serde_json::json!({
+            "test": "value"
+        });
+        let response = json_response(data);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("test"));
+        assert!(body_str.contains("value"));
+    }
+
+    #[tokio::test]
+    async fn test_error_response_helper() {
+        let response = error_response("Test error message");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body_str.contains("Err"));
+        assert!(body_str.contains("Test error message"));
+    }
 }

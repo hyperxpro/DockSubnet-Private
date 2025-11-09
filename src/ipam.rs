@@ -35,8 +35,7 @@ impl IpamPlugin {
         let pool_id = format!("pool-{}", uuid::Uuid::new_v4());
 
         // Validate the pool is a valid CIDR
-        pool.parse::<IpNetwork>()
-            .context("Invalid subnet format")?;
+        pool.parse::<IpNetwork>().context("Invalid subnet format")?;
 
         // Store pool info
         let pool_info = PoolInfo {
@@ -71,7 +70,9 @@ impl IpamPlugin {
             // Also remove all leases from this pool
             if let Some(subnet) = pool_subnet {
                 if let Ok(network) = subnet.parse::<IpNetwork>() {
-                    state.leases.retain(|lease| !network.contains(lease.ip_address));
+                    state
+                        .leases
+                        .retain(|lease| !network.contains(lease.ip_address));
                 }
             }
         }
@@ -82,7 +83,10 @@ impl IpamPlugin {
     }
 
     /// Handle RequestAddress request
-    pub async fn request_address(&self, req: RequestAddressRequest) -> Result<RequestAddressResponse> {
+    pub async fn request_address(
+        &self,
+        req: RequestAddressRequest,
+    ) -> Result<RequestAddressResponse> {
         let pool_info = {
             let state = self.storage.read().await;
             state
@@ -92,10 +96,7 @@ impl IpamPlugin {
                 .ok_or_else(|| anyhow!("Pool not found: {}", req.pool_id))?
         };
 
-        let network: IpNetwork = pool_info
-            .subnet
-            .parse()
-            .context("Invalid subnet in pool")?;
+        let network: IpNetwork = pool_info.subnet.parse().context("Invalid subnet in pool")?;
 
         // Extract container name from options
         let container_name = req
@@ -117,7 +118,8 @@ impl IpamPlugin {
 
         // If a specific address is requested, use it
         let ip_addr = if let Some(requested_addr) = req.address {
-            requested_addr.parse::<IpAddr>()
+            requested_addr
+                .parse::<IpAddr>()
                 .context("Invalid IP address format")?
         } else {
             // Allocate next available IP
@@ -126,7 +128,11 @@ impl IpamPlugin {
 
         // Ensure the IP is within the network
         if !network.contains(ip_addr) {
-            return Err(anyhow!("IP address {} is not in subnet {}", ip_addr, network));
+            return Err(anyhow!(
+                "IP address {} is not in subnet {}",
+                ip_addr,
+                network
+            ));
         }
 
         // Create the lease
@@ -165,8 +171,7 @@ impl IpamPlugin {
     pub async fn release_address(&self, req: ReleaseAddressRequest) -> Result<()> {
         // Parse the address (might have CIDR notation)
         let ip_str = req.address.split('/').next().unwrap_or(&req.address);
-        let ip_addr: IpAddr = ip_str.parse()
-            .context("Invalid IP address format")?;
+        let ip_addr: IpAddr = ip_str.parse().context("Invalid IP address format")?;
 
         {
             let mut state = self.storage.write().await;
@@ -200,10 +205,8 @@ impl IpamPlugin {
         // Find first available IP (skip network address and broadcast)
         for ip in network.iter().skip(1) {
             // Skip the last IP if it's IPv4 (broadcast)
-            if let IpAddr::V4(_) = ip {
-                if ip == network.broadcast() {
-                    continue;
-                }
+            if ip.is_ipv4() && ip == network.broadcast() {
+                continue;
             }
 
             if !allocated.contains(&ip) {
@@ -464,5 +467,76 @@ mod tests {
 
         let result = plugin.request_pool(req).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_address_request_with_nonexistent_pool() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        let req = RequestAddressRequest {
+            pool_id: "nonexistent-pool-id".to_string(),
+            address: None,
+            options: None,
+        };
+
+        let result = plugin.request_address(req).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Pool not found"));
+    }
+
+    #[tokio::test]
+    async fn test_allocate_next_ip_skips_network_and_broadcast() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        let pool_req = RequestPoolRequest {
+            pool: Some("172.16.0.0/30".to_string()), // Only .1 and .2 are usable
+            sub_pool: None,
+            options: None,
+            v6: None,
+        };
+        let pool_resp = plugin.request_pool(pool_req).await.unwrap();
+
+        // First allocation should be 172.16.0.1
+        let addr_req1 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let addr_resp1 = plugin.request_address(addr_req1).await.unwrap();
+        assert_eq!(addr_resp1.address, "172.16.0.1/30");
+
+        // Second allocation should be 172.16.0.2
+        let addr_req2 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let addr_resp2 = plugin.request_address(addr_req2).await.unwrap();
+        assert_eq!(addr_resp2.address, "172.16.0.2/30");
+
+        // Third allocation should fail (only .0=network, .1 and .2 usable, .3=broadcast)
+        let addr_req3 = RequestAddressRequest {
+            pool_id: pool_resp.pool_id.clone(),
+            address: None,
+            options: None,
+        };
+        let result = plugin.request_address(addr_req3).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_pool_creation() {
+        let (plugin, _temp) = create_test_plugin().await;
+
+        // Create an IPv6 pool
+        let pool_req = RequestPoolRequest {
+            pool: Some("2001:db8::/32".to_string()),
+            sub_pool: None,
+            options: None,
+            v6: Some(true),
+        };
+        let pool_resp = plugin.request_pool(pool_req).await.unwrap();
+        assert_eq!(pool_resp.pool, "2001:db8::/32");
+        assert!(pool_resp.pool_id.starts_with("pool-"));
     }
 }
