@@ -27,8 +27,8 @@ async fn main() -> anyhow::Result<()> {
     let state_file = std::env::var("STATE_FILE")
         .unwrap_or_else(|_| "/var/lib/docker-ipam/state.yaml".to_string());
 
-    let default_subnet = std::env::var("DEFAULT_SUBNET")
-        .unwrap_or_else(|_| "172.18.0.0/16".to_string());
+    let default_subnet =
+        std::env::var("DEFAULT_SUBNET").unwrap_or_else(|_| "172.18.0.0/16".to_string());
 
     tracing::info!("Starting Docker IPAM Plugin");
     tracing::info!("Socket path: {}", socket_path);

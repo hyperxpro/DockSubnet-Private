@@ -35,8 +35,7 @@ impl IpamPlugin {
         let pool_id = format!("pool-{}", uuid::Uuid::new_v4());
 
         // Validate the pool is a valid CIDR
-        pool.parse::<IpNetwork>()
-            .context("Invalid subnet format")?;
+        pool.parse::<IpNetwork>().context("Invalid subnet format")?;
 
         // Store pool info
         let pool_info = PoolInfo {
@@ -71,7 +70,9 @@ impl IpamPlugin {
             // Also remove all leases from this pool
             if let Some(subnet) = pool_subnet {
                 if let Ok(network) = subnet.parse::<IpNetwork>() {
-                    state.leases.retain(|lease| !network.contains(lease.ip_address));
+                    state
+                        .leases
+                        .retain(|lease| !network.contains(lease.ip_address));
                 }
             }
         }
@@ -82,7 +83,10 @@ impl IpamPlugin {
     }
 
     /// Handle RequestAddress request
-    pub async fn request_address(&self, req: RequestAddressRequest) -> Result<RequestAddressResponse> {
+    pub async fn request_address(
+        &self,
+        req: RequestAddressRequest,
+    ) -> Result<RequestAddressResponse> {
         let pool_info = {
             let state = self.storage.read().await;
             state
@@ -92,10 +96,7 @@ impl IpamPlugin {
                 .ok_or_else(|| anyhow!("Pool not found: {}", req.pool_id))?
         };
 
-        let network: IpNetwork = pool_info
-            .subnet
-            .parse()
-            .context("Invalid subnet in pool")?;
+        let network: IpNetwork = pool_info.subnet.parse().context("Invalid subnet in pool")?;
 
         // Extract container name from options
         let container_name = req
@@ -117,7 +118,8 @@ impl IpamPlugin {
 
         // If a specific address is requested, use it
         let ip_addr = if let Some(requested_addr) = req.address {
-            requested_addr.parse::<IpAddr>()
+            requested_addr
+                .parse::<IpAddr>()
                 .context("Invalid IP address format")?
         } else {
             // Allocate next available IP
@@ -126,7 +128,11 @@ impl IpamPlugin {
 
         // Ensure the IP is within the network
         if !network.contains(ip_addr) {
-            return Err(anyhow!("IP address {} is not in subnet {}", ip_addr, network));
+            return Err(anyhow!(
+                "IP address {} is not in subnet {}",
+                ip_addr,
+                network
+            ));
         }
 
         // Create the lease
@@ -165,8 +171,7 @@ impl IpamPlugin {
     pub async fn release_address(&self, req: ReleaseAddressRequest) -> Result<()> {
         // Parse the address (might have CIDR notation)
         let ip_str = req.address.split('/').next().unwrap_or(&req.address);
-        let ip_addr: IpAddr = ip_str.parse()
-            .context("Invalid IP address format")?;
+        let ip_addr: IpAddr = ip_str.parse().context("Invalid IP address format")?;
 
         {
             let mut state = self.storage.write().await;
@@ -200,10 +205,8 @@ impl IpamPlugin {
         // Find first available IP (skip network address and broadcast)
         for ip in network.iter().skip(1) {
             // Skip the last IP if it's IPv4 (broadcast)
-            if let IpAddr::V4(_) = ip {
-                if ip == network.broadcast() {
-                    continue;
-                }
+            if ip.is_ipv4() && ip == network.broadcast() {
+                continue;
             }
 
             if !allocated.contains(&ip) {

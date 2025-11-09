@@ -97,18 +97,14 @@ async fn handle_request(
     tracing::debug!("{} {}", method, path);
 
     let response = match (&method, path.as_str()) {
-        (&Method::POST, "/Plugin.Activate") => {
-            json_response(serde_json::json!({
-                "Implements": ["IpamDriver"]
-            }))
-        }
+        (&Method::POST, "/Plugin.Activate") => json_response(serde_json::json!({
+            "Implements": ["IpamDriver"]
+        })),
 
-        (&Method::POST, "/IpamDriver.GetCapabilities") => {
-            match plugin.get_capabilities().await {
-                Ok(caps) => json_response(caps),
-                Err(e) => error_response(&e.to_string()),
-            }
-        }
+        (&Method::POST, "/IpamDriver.GetCapabilities") => match plugin.get_capabilities().await {
+            Ok(caps) => json_response(caps),
+            Err(e) => error_response(&e.to_string()),
+        },
 
         (&Method::POST, "/IpamDriver.GetDefaultAddressSpaces") => {
             json_response(serde_json::json!({
@@ -175,8 +171,7 @@ async fn parse_body<T: serde::de::DeserializeOwned>(req: Request<Body>) -> Resul
         .await
         .map_err(|e| format!("Failed to read body: {}", e))?;
 
-    serde_json::from_slice(&body_bytes)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))
+    serde_json::from_slice(&body_bytes).map_err(|e| format!("Failed to parse JSON: {}", e))
 }
 
 /// Create a JSON response

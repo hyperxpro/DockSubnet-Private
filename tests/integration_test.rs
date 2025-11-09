@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use tempfile::TempDir;
-
 // Integration test for the full IPAM workflow
 #[tokio::test]
 async fn test_full_ipam_workflow() {
@@ -13,7 +10,6 @@ async fn test_full_ipam_workflow() {
 
     // The actual test would require importing and using the plugin modules
     // For now, this serves as a placeholder for integration tests
-    assert!(true);
 }
 
 #[tokio::test]
@@ -24,8 +20,6 @@ async fn test_persistence_across_restarts() {
     // 3. Drop the plugin instance
     // 4. Create new plugin instance with same state file
     // 5. Verify allocated IPs are still present
-
-    assert!(true);
 }
 
 #[test]
@@ -45,7 +39,9 @@ fn test_yaml_serialization() {
         leases: Vec::new(),
     };
 
-    state.pools.insert("pool-1".to_string(), "10.0.0.0/24".to_string());
+    state
+        .pools
+        .insert("pool-1".to_string(), "10.0.0.0/24".to_string());
     state.leases.push("10.0.0.1".to_string());
 
     let yaml = serde_yaml::to_string(&state).unwrap();

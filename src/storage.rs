@@ -20,8 +20,7 @@ impl Storage {
             let contents = fs::read_to_string(&file_path)
                 .await
                 .context("Failed to read state file")?;
-            serde_yaml::from_str(&contents)
-                .context("Failed to parse state file")?
+            serde_yaml::from_str(&contents).context("Failed to parse state file")?
         } else {
             // Create parent directory if it doesn't exist
             if let Some(parent) = file_path.parent() {
@@ -49,8 +48,7 @@ impl Storage {
     /// Persist the current state to the YAML file
     pub async fn save(&self) -> Result<()> {
         let state = self.state.read().await;
-        let yaml = serde_yaml::to_string(&*state)
-            .context("Failed to serialize state")?;
+        let yaml = serde_yaml::to_string(&*state).context("Failed to serialize state")?;
 
         // Write to a temp file first, then rename for atomicity
         let temp_path = self.file_path.with_extension("tmp");
@@ -67,13 +65,14 @@ impl Storage {
     }
 
     /// Reload state from disk
+    #[allow(dead_code)]
     pub async fn reload(&self) -> Result<()> {
         if self.file_path.exists() {
             let contents = fs::read_to_string(&self.file_path)
                 .await
                 .context("Failed to read state file")?;
-            let new_state: IpamState = serde_yaml::from_str(&contents)
-                .context("Failed to parse state file")?;
+            let new_state: IpamState =
+                serde_yaml::from_str(&contents).context("Failed to parse state file")?;
 
             let mut state = self.state.write().await;
             *state = new_state;
